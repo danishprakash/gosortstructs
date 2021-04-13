@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -10,11 +11,35 @@ import (
 	"sort"
 )
 
+type Test struct {
+	Name string
+	age  int
+}
+
+func formatOutput(fset *token.FileSet, file *ast.File) []byte {
+	var buf bytes.Buffer
+	err := format.Node(&buf, fset, file)
+	if err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
 func main() {
+	// read file
+	// pass struct name
+	var structName = flag.String("struct", "", "struct to sort")
+	flag.Parse()
+
 	src := `package main
 type Example struct {
 	Name String
 	Age Int
+}
+
+type Hotel struct {
+	Rating int
+	Location String
 }`
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "", src, parser.ParseComments)
@@ -23,7 +48,21 @@ type Example struct {
 	}
 
 	ast.Inspect(file, func(x ast.Node) bool {
-		s, ok := x.(*ast.StructType)
+		t, ok := x.(*ast.TypeSpec)
+		if !ok {
+			return true
+		}
+
+		if t.Type == nil {
+			return true
+		}
+
+		name := t.Name.Name
+		if len(*structName) > 0 && name != *structName {
+			return true
+		}
+
+		s, ok := t.Type.(*ast.StructType)
 		if !ok {
 			return true
 		}
@@ -40,11 +79,5 @@ type Example struct {
 		return false
 	})
 
-	var buf bytes.Buffer
-	err = format.Node(&buf, fset, file)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println(buf.String())
+	fmt.Println(string(formatOutput(fset, file)))
 }
