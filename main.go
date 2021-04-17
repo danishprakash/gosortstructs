@@ -1,5 +1,8 @@
 package main
 
+// usage
+// gosortstruct --file main.go --reverse --struct Node
+
 import (
 	"bytes"
 	"flag"
@@ -11,43 +14,22 @@ import (
 	"sort"
 )
 
-type Test struct {
-	Name string
-	age  int
+type config struct {
+	file    string
+	strct   string // TODO: this should be a []string
+	reverse bool
+	fset    *token.FileSet
+	source  string
 }
 
-func formatOutput(fset *token.FileSet, file *ast.File) []byte {
-	var buf bytes.Buffer
-	err := format.Node(&buf, fset, file)
-	if err != nil {
-		panic(err)
-	}
-	return buf.Bytes()
+func (c *config) parse() (*ast.File, error) {
+	c.fset = token.NewFileSet()
+	var src interface{}
+	return parser.ParseFile(c.fset, c.file, src, parser.ParseComments)
 }
 
-func main() {
-	// read file
-	// pass struct name
-	var structName = flag.String("struct", "", "struct to sort")
-	flag.Parse()
-
-	src := `package main
-type Example struct {
-	Name String
-	Age Int
-}
-
-type Hotel struct {
-	Rating int
-	Location String
-}`
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "", src, parser.ParseComments)
-	if err != nil {
-		panic(err)
-	}
-
-	ast.Inspect(file, func(x ast.Node) bool {
+func (c *config) process(node *ast.File) (*ast.File, error) {
+	sortStructs := func(x ast.Node) bool {
 		t, ok := x.(*ast.TypeSpec)
 		if !ok {
 			return true
@@ -58,7 +40,7 @@ type Hotel struct {
 		}
 
 		name := t.Name.Name
-		if len(*structName) > 0 && name != *structName {
+		if len(c.strct) > 0 && name != c.strct {
 			return true
 		}
 
@@ -67,17 +49,62 @@ type Hotel struct {
 			return true
 		}
 
-		// fmt.Println(s.Fields.NumFields())
-		sort.Slice(s.Fields.List, func(i, j int) bool {
-			return s.Fields.List[i].Names[0].Name < s.Fields.List[j].Names[0].Name
-		})
-
-		// for _, field := range s.Fields.List {
-		// 	fmt.Printf("Field: %s\n", field.Names[0].Name)
-		// }
+		// TODO: do away with this
+		if c.reverse {
+			sort.Slice(s.Fields.List, func(i, j int) bool {
+				return s.Fields.List[i].Names[0].Name > s.Fields.List[j].Names[0].Name
+			})
+		} else {
+			sort.Slice(s.Fields.List, func(i, j int) bool {
+				return s.Fields.List[i].Names[0].Name < s.Fields.List[j].Names[0].Name
+			})
+		}
 
 		return false
-	})
+	}
 
-	fmt.Println(string(formatOutput(fset, file)))
+	ast.Inspect(node, sortStructs)
+	return node, nil
+}
+
+func (c *config) format(node *ast.File) (string, error) {
+	var buf bytes.Buffer
+	err := format.Node(&buf, c.fset, node)
+	if err != nil {
+		panic(err)
+	}
+	return buf.String(), err
+}
+
+func main() {
+	var (
+		flagFile    = flag.String("file", "", "file name to be processed")
+		flagReverse = flag.Bool("reverse", false, "reverse alphabetical sort")
+		flagStruct  = flag.String("struct", "", "struct to sort")
+		// TODO: add --rewrite flag which updates the file being processed
+	)
+	flag.Parse()
+
+	cfg := config{
+		file:    *flagFile,
+		reverse: *flagReverse,
+		strct:   *flagStruct,
+	}
+
+	node, err := cfg.parse()
+	if err != nil {
+		panic(err)
+	}
+
+	node, err = cfg.process(node)
+	if err != nil {
+		panic(err)
+	}
+
+	out, err := cfg.format(node)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(out)
 }
