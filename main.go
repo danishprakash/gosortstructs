@@ -16,10 +16,11 @@ import (
 
 type config struct {
 	file    string
-	strct   string // TODO: this should be a []string
-	reverse bool
 	fset    *token.FileSet
+	reverse bool
 	source  string
+	strct   string
+	write   bool
 }
 
 func (c *config) parse() (*ast.File, error) {
@@ -73,6 +74,17 @@ func (c *config) format(node *ast.File) (string, error) {
 	if err != nil {
 		panic(err)
 	}
+
+	if c.write {
+		// write to source file
+		// do we want to print to stdout then?
+
+		// err = ioutil.WriteFile(c.file, buf.Bytes(), 0)
+		// if err != nil {
+		// 	panic(err)
+		// }
+	}
+
 	return buf.String(), err
 }
 
@@ -80,8 +92,8 @@ func main() {
 	var (
 		flagFile    = flag.String("file", "", "file name to be processed")
 		flagReverse = flag.Bool("reverse", false, "reverse alphabetical sort")
+		flagWrite   = flag.Bool("write", false, "write result to source file (overwrite)")
 		flagStruct  = flag.String("struct", "", "struct to sort")
-		// TODO: add --rewrite flag which updates the file being processed
 	)
 	flag.Parse()
 
@@ -89,6 +101,7 @@ func main() {
 		file:    *flagFile,
 		reverse: *flagReverse,
 		strct:   *flagStruct,
+		write:   *flagWrite,
 	}
 
 	node, err := cfg.parse()
