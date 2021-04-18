@@ -154,10 +154,6 @@ func (c *config) process(node *ast.File) (*ast.File, error) {
 			// fmt.Println(anon[0].Name)
 		}
 
-		// gather standard and anonymous structs separately
-		// condition := func(f []*ast.Ident) bool { return f == nil }
-		// s.Fields.List = filter(s, condition)
-
 		sortFunc := func(i, j int) bool {
 			return s.Fields.List[i].Names[0].Name < s.Fields.List[j].Names[0].Name
 		}
