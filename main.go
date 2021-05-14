@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dave/dst"
+	"github.com/dave/dst/decorator"
 	"golang.org/x/tools/go/buildutil"
 )
 
@@ -43,7 +45,10 @@ type offset struct {
 // of anonymous fields i.e have field names
 type structType struct {
 	Name string
-	node *ast.Field
+	node *dst.Field
+	// Comment *ast.CommentGroup
+	// Doc     *ast.CommentGroup
+	// Tag     *ast.CommentGroup
 }
 
 func main() {
@@ -72,9 +77,11 @@ func start() error {
 		line:    *flagLine,
 	}
 
-	splitted := strings.Split(*flagLine, ",")
-	cfg.start, _ = strconv.Atoi(splitted[0])
-	cfg.end, _ = strconv.Atoi(splitted[1])
+	if len(*flagLine) != 0 {
+		splitted := strings.Split(*flagLine, ",")
+		cfg.start, _ = strconv.Atoi(splitted[0])
+		cfg.end, _ = strconv.Atoi(splitted[1])
+	}
 
 	// read from stdin (for use by editors)
 	if *flagModified {
@@ -86,22 +93,35 @@ func start() error {
 		return err
 	}
 
-	node, err := cfg.parse()
+	astFile, err := cfg.parse()
 	if err != nil {
 		return err
 	}
 
-	node, err = cfg.modify(node)
+	dec := decorator.NewDecorator(cfg.fset)
+	f, err := dec.DecorateFile(astFile)
 	if err != nil {
+		panic(err)
+	}
+
+	node, err := cfg.modify(f)
+	if err != nil {
+		fmt.Printf("modify err: %+v", err)
 		return err
 	}
 
-	out, err := cfg.format(node)
-	if err != nil {
-		return err
+	fmt.Printf("%+v", node)
+	if err := decorator.Print(node); err != nil {
+		fmt.Printf("print err: %+v", err)
+		panic(err)
 	}
 
-	fmt.Println(out)
+	// out, err := cfg.format(node)
+	// if err != nil {
+	// 	return err
+	// }
+
+	// fmt.Println(out)
 	return nil
 }
 
@@ -142,25 +162,25 @@ func (c *config) parse() (*ast.File, error) {
 }
 
 // https://golang.org/src/go/ast/filter.go
-func fieldName(x interface{}) *ast.Ident {
+func fieldName(x interface{}) *dst.Ident {
 	switch t := x.(type) {
-	case *ast.Ident:
+	case *dst.Ident:
 		return t
-	case *ast.SelectorExpr:
-		if _, ok := t.X.(*ast.Ident); ok {
+	case *dst.SelectorExpr:
+		if _, ok := t.X.(*dst.Ident); ok {
 			return t.Sel
 		}
-	case *ast.StarExpr:
+	case *dst.StarExpr:
 		return fieldName(t.X)
 	}
 	return nil
 }
 
-func (c *config) modify(node *ast.File) (*ast.File, error) {
+func (c *config) modify(f *dst.File) (*dst.File, error) {
 	var foundOne bool
-	sortStructs := func(x ast.Node) bool {
+	sortStructs := func(x dst.Node) bool {
 		var anon = []structType{}
-		t, ok := x.(*ast.TypeSpec)
+		t, ok := x.(*dst.TypeSpec)
 		if !ok {
 			return true
 		}
@@ -178,25 +198,22 @@ func (c *config) modify(node *ast.File) (*ast.File, error) {
 		}
 
 		// to get names of anon fields
-		s, ok := t.Type.(*ast.StructType)
+		s, ok := t.Type.(*dst.StructType)
 		if !ok {
 			return true
 		}
 
 		// now that the current node is indeed a struct
-		// if line number is provided, let's do an early
-		// return if this is not the struct we're interested in
-		startLNo := c.fset.Position(s.Pos()).Line
-		endLNo := c.fset.Position(s.End()).Line
+		// if line number is provided, do an early return
+		// if this is not the struct we're interested in
 
-		// fmt.Printf("name: %+v, start: %d, end: %d, line: %s\n", name, startLNo, endLNo, c.line)
-		if len(c.line) != 0 {
-			if !(startLNo <= c.start && c.end <= endLNo) {
-				return true
-			}
-		}
-
-		// fmt.Println("here for ", name)
+		// startLNo := s.Decorations().Start
+		// endLNo := s.Decorations().End
+		// if len(c.line) != 0 {
+		// 	if !(startLNo <= c.start && c.end <= endLNo) {
+		// 		return true
+		// 	}
+		// }
 
 		// separate out anonymous fields
 		for i := len(s.Fields.List) - 1; i >= 0; i-- {
@@ -209,7 +226,7 @@ func (c *config) modify(node *ast.File) (*ast.File, error) {
 			}
 		}
 
-		// will through out of bounds for structs which
+		// will throw out of bounds for structs which
 		// have no anonymous fields, keep a check here
 		if len(anon) != 0 {
 			// fmt.Println(anon[0].Name)
@@ -253,16 +270,41 @@ func (c *config) modify(node *ast.File) (*ast.File, error) {
 			}
 		}
 
+		// for i := range s.Fields.List {
+		// 	// fmt.Println(s.Fields.List[i].Doc.Text())
+		// 	// fmt.Printf("%d: %+v\n", i, s.Fields.List[i].Doc.Text())
+		// }
+
+		// tmp := copyField(s.Fields.List[1])
+		// s.Fields.List[1] = copyField(s.Fields.List[0])
+		// s.Fields.List[0] = copyField(tmp)
+
+		// fmt.Println(s.Fields.List[0].Names)
+		// fmt.Println(s.Fields.List[1].Names)
+		// fmt.Println(s.Fields.List[0].Doc.Text())
+		// fmt.Println(s.Fields.List[1].Doc.Text())
+		// fmt.Println(c.fset.Position(s.Fields.List[0].Doc.Pos()).Line)
+		// fmt.Println(c.fset.Position(s.Fields.List[1].Doc.Pos()).Line)
+		// fmt.Println(c.fset.Position(s.Fields.List[0].Doc.Pos()).Line)
+
 		return true
 	}
 
-	ast.Inspect(node, sortStructs)
+	dst.Inspect(f, sortStructs)
 
 	if c.strct != "" && !foundOne {
-		return node, errors.New("no struct found")
+		return f, errors.New("no struct found")
 	}
 
-	return node, nil
+	return f, nil
+}
+
+func copyField(node *dst.Field) *dst.Field {
+	return &dst.Field{
+		Names: node.Names,
+		Tag:   node.Tag,
+		Type:  node.Type.(dst.Expr),
+	}
 }
 
 func (c *config) format(node *ast.File) (string, error) {
