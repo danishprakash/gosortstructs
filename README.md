@@ -1,8 +1,8 @@
 # gosortstructs
 sorts structs
 
-##### Why
-I wrote this as an assistive binary for a vim-plugin which would automatically sort structs in a given go file on a save event based a certain heuristic. The resultant go code after running this conforms with gofmt but is eventually subjective in style.
+##### What
+A command line tool which uses AST to sort fields of a Go struct for easier readability and better diffs. This tool is meant to be used as an underlying tool for text editors ([vim-plugin](https://github.com/danishprakash/vim-gosortstructs)). The resultant Go code conforms with gofmt but is eventually opinionated.
 
 ##### How
 - By default, this program alphabetically sorts the struct(s) in the specified file.
@@ -29,8 +29,8 @@ type Hotel struct {
 ```
 
 ##### Advantages
-- In large codebases, it makes it easier to identify what all fields are added to a struct since they'll be sorted alphabetically.
-- If you've intermixed fields as in the above example, your tags would be wrongly indented which makes for a not so good picture.
+- In large codebases, it makes it easier to identify all new fields that are added to a struct if they are sorted alphabetically.
+- If you've intermixed fields as in the above example, your struct tags would be wrongly indented which hampers readability.
 
 ##### Installation
 
@@ -51,4 +51,13 @@ Usage of gosortstructs:
         struct to sort
   -write
         write result to source file (overwrite)
+  -line
+        position of the struct/cursor (to be used programmatically)
 ```
+
+
+
+#### License
+MIT License
+
+Copyright (c) [Danish Prakash](https://github.com/danishprakash)
