@@ -8,8 +8,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"go/ast"
-	"go/format"
 	"go/parser"
 	"go/token"
 	"io"
@@ -28,6 +26,8 @@ import (
 type config struct {
 	file     string
 	fset     *token.FileSet
+	dec      *decorator.Decorator
+	df       *dst.File
 	reverse  bool
 	source   string
 	strct    string
@@ -42,13 +42,10 @@ type offset struct {
 }
 
 // simple wrapper to facilitate sorting
-// of anonymous fields i.e have field names
+// of anonymous fields (not having field names)
 type structType struct {
 	Name string
 	node *dst.Field
-	// Comment *ast.CommentGroup
-	// Doc     *ast.CommentGroup
-	// Tag     *ast.CommentGroup
 }
 
 func main() {
@@ -90,43 +87,26 @@ func start() error {
 
 	err := cfg.validate()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to validate command line flags: %+v", err)
 	}
 
-	astFile, err := cfg.parse()
+	f, err := cfg.parse()
 	if err != nil {
-		return err
-	}
-
-	dec := decorator.NewDecorator(cfg.fset)
-	f, err := dec.DecorateFile(astFile)
-	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to parse source: %+v", err)
 	}
 
 	node, err := cfg.modify(f)
 	if err != nil {
-		fmt.Printf("modify err: %+v", err)
-		return err
+		return fmt.Errorf("failed to modify source: %+v", err)
 	}
 
-	fmt.Printf("%+v", node)
-	if err := decorator.Print(node); err != nil {
-		fmt.Printf("print err: %+v", err)
-		panic(err)
+	err = cfg.format(node)
+	if err != nil {
+		return fmt.Errorf("failed to format source: %+v", err)
 	}
 
-	// out, err := cfg.format(node)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// fmt.Println(out)
 	return nil
 }
-
-// func (c *config) findSelection(node ast.Node) (int, int, error) {
-// }
 
 func (c *config) validate() error {
 	if c.file == "" {
@@ -140,7 +120,7 @@ func (c *config) validate() error {
 	return nil
 }
 
-func (c *config) parse() (*ast.File, error) {
+func (c *config) parse() (*dst.File, error) {
 	c.fset = token.NewFileSet()
 	var src interface{}
 
@@ -158,7 +138,18 @@ func (c *config) parse() (*ast.File, error) {
 		src = fc
 	}
 
-	return parser.ParseFile(c.fset, c.file, src, parser.ParseComments)
+	astFile, err := parser.ParseFile(c.fset, c.file, src, parser.ParseComments)
+	if err != nil {
+		panic(err)
+	}
+
+	c.dec = decorator.NewDecorator(c.fset)
+	c.df, err = c.dec.DecorateFile(astFile)
+	if err != nil {
+		panic(err)
+	}
+
+	return c.df, nil
 }
 
 // https://golang.org/src/go/ast/filter.go
@@ -176,10 +167,15 @@ func fieldName(x interface{}) *dst.Ident {
 	return nil
 }
 
+// modify Inspects the (a)dst node and sorts the
+// fields of the struct based on specified flags
 func (c *config) modify(f *dst.File) (*dst.File, error) {
 	var foundOne bool
 	sortStructs := func(x dst.Node) bool {
 		var anon = []structType{}
+
+		// we need TypeSpec so as to
+		// parse the name of the struct
 		t, ok := x.(*dst.TypeSpec)
 		if !ok {
 			return true
@@ -189,31 +185,29 @@ func (c *config) modify(f *dst.File) (*dst.File, error) {
 			return true
 		}
 
-		name := t.Name.Name
-
 		// if --struct is passed and no matches
 		// found, return appropriate response
-		if c.strct != "" && name == c.strct {
+		if c.strct != "" && t.Name.Name == c.strct {
 			foundOne = true
 		}
 
-		// to get names of anon fields
+		// if this is the struct we want to modify
+		// get the StructType type and begin modification
 		s, ok := t.Type.(*dst.StructType)
 		if !ok {
 			return true
 		}
 
 		// now that the current node is indeed a struct
-		// if line number is provided, do an early return
-		// if this is not the struct we're interested in
-
-		// startLNo := s.Decorations().Start
-		// endLNo := s.Decorations().End
-		// if len(c.line) != 0 {
-		// 	if !(startLNo <= c.start && c.end <= endLNo) {
-		// 		return true
-		// 	}
-		// }
+		// if line number is provided, return if no match
+		if len(c.line) != 0 {
+			// convert dst node to ast and get position
+			startLNo := c.fset.Position(c.dec.Ast.Nodes[x].Pos()).Line
+			endLNo := c.fset.Position(c.dec.Ast.Nodes[x].End()).Line
+			if !(startLNo <= c.start && c.end <= endLNo) {
+				return true
+			}
+		}
 
 		// separate out anonymous fields
 		for i := len(s.Fields.List) - 1; i >= 0; i-- {
@@ -226,11 +220,7 @@ func (c *config) modify(f *dst.File) (*dst.File, error) {
 			}
 		}
 
-		// will throw out of bounds for structs which
-		// have no anonymous fields, keep a check here
-		if len(anon) != 0 {
-			// fmt.Println(anon[0].Name)
-		}
+		// less functions for sort.Slice()
 
 		sortFunc := func(i, j int) bool {
 			return s.Fields.List[i].Names[0].Name < s.Fields.List[j].Names[0].Name
@@ -248,8 +238,6 @@ func (c *config) modify(f *dst.File) (*dst.File, error) {
 			return anon[i].Name < anon[j].Name
 		}
 
-		// TODO: --reverse sort on structs with anon
-		// fields tend to have a newline separation
 		// sort anonymous fields separately
 		if c.reverse {
 			sort.Slice(s.Fields.List, revSortFunc)
@@ -263,29 +251,12 @@ func (c *config) modify(f *dst.File) (*dst.File, error) {
 			}
 		}
 
-		// push back sorted anonymous fields
+		// append sorted anonymous fields (segregation)
 		if len(anon) != 0 {
 			for _, f := range anon {
 				s.Fields.List = append(s.Fields.List, f.node)
 			}
 		}
-
-		// for i := range s.Fields.List {
-		// 	// fmt.Println(s.Fields.List[i].Doc.Text())
-		// 	// fmt.Printf("%d: %+v\n", i, s.Fields.List[i].Doc.Text())
-		// }
-
-		// tmp := copyField(s.Fields.List[1])
-		// s.Fields.List[1] = copyField(s.Fields.List[0])
-		// s.Fields.List[0] = copyField(tmp)
-
-		// fmt.Println(s.Fields.List[0].Names)
-		// fmt.Println(s.Fields.List[1].Names)
-		// fmt.Println(s.Fields.List[0].Doc.Text())
-		// fmt.Println(s.Fields.List[1].Doc.Text())
-		// fmt.Println(c.fset.Position(s.Fields.List[0].Doc.Pos()).Line)
-		// fmt.Println(c.fset.Position(s.Fields.List[1].Doc.Pos()).Line)
-		// fmt.Println(c.fset.Position(s.Fields.List[0].Doc.Pos()).Line)
 
 		return true
 	}
@@ -299,27 +270,20 @@ func (c *config) modify(f *dst.File) (*dst.File, error) {
 	return f, nil
 }
 
-func copyField(node *dst.Field) *dst.Field {
-	return &dst.Field{
-		Names: node.Names,
-		Tag:   node.Tag,
-		Type:  node.Type.(dst.Expr),
-	}
-}
-
-func (c *config) format(node *ast.File) (string, error) {
+func (c *config) format(node *dst.File) error {
 	var buf bytes.Buffer
-	err := format.Node(&buf, c.fset, node)
+	err := decorator.Fprint(&buf, node)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	if c.write {
 		err = ioutil.WriteFile(c.file, buf.Bytes(), 0)
 		if err != nil {
-			panic(err)
+			return err
 		}
 	}
 
-	return buf.String(), err
+	fmt.Println(buf.String())
+	return nil
 }
