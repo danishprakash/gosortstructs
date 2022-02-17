@@ -35,7 +35,7 @@ type Hotel struct {
 ##### Installation
 
 ```sh
-go get -u github.com/danishprakash/gosortstructs
+go install danishpraka.sh/gosortstructs@latest
 ```
 
 #### Usage
