@@ -230,39 +230,78 @@ func (c *config) modify(f *dst.File) (*dst.File, error) {
 		}
 	}
 
+	sortStructLitFields := func(s *dst.CompositeLit) {
+		// Skip anonymous fields
+		if _, ok := s.Elts[0].(*dst.KeyValueExpr); !ok {
+			return
+		}
+
+		sort.SliceStable(s.Elts, func(i, j int) bool {
+			kvI, okI := s.Elts[i].(*dst.KeyValueExpr)
+			kvJ, okJ := s.Elts[j].(*dst.KeyValueExpr)
+
+			if !okI || !okJ {
+				return false
+			}
+
+			if c.reverse {
+				return fieldName(kvI.Key).Name > fieldName(kvJ.Key).Name
+			}
+
+			return fieldName(kvI.Key).Name < fieldName(kvJ.Key).Name
+		})
+	}
+
 	sortStructs := func(x dst.Node) bool {
-		t, ok := x.(*dst.TypeSpec)
-		if !ok {
-			return true
-		}
+		switch t := x.(type) {
+		case *dst.CompositeLit:
+			switch t.Type.(type) {
+			case *dst.Ident:
+				if len(t.Elts) > 0 {
+					sortStructLitFields(t)
+				}
 
-		if t.Type == nil {
-			return true
-		}
+			case *dst.ArrayType:
+				for _, elt := range t.Elts {
+					inner, ok := elt.(*dst.CompositeLit)
+					if !ok || (ok && len(inner.Elts) == 0) {
+						continue
+					}
 
-		if c.strct != "" && t.Name.Name == c.strct {
-			foundOne = true
-		}
+					sortStructLitFields(inner)
+				}
+			}
 
-		// if this is the struct we want to modify
-		// get the StructType type and begin modification
-		s, ok := t.Type.(*dst.StructType)
-		if !ok {
-			return true
-		}
-
-		// now that the current node is indeed a struct
-		// if line number is provided, return if no match
-		if len(c.line) != 0 {
-			// convert dst node to ast and get position
-			startLNo := c.fset.Position(c.dec.Ast.Nodes[x].Pos()).Line
-			endLNo := c.fset.Position(c.dec.Ast.Nodes[x].End()).Line
-			if !(startLNo <= c.start && c.end <= endLNo) {
+		case *dst.TypeSpec:
+			if t.Type == nil {
 				return true
 			}
+
+			if c.strct != "" && t.Name.Name == c.strct {
+				foundOne = true
+			}
+
+			// if this is the struct we want to modify
+			// get the StructType type and begin modification
+			s, ok := t.Type.(*dst.StructType)
+			if !ok {
+				return true
+			}
+
+			// now that the current node is indeed a struct
+			// if line number is provided, return if no match
+			if len(c.line) != 0 {
+				// convert dst node to ast and get position
+				startLNo := c.fset.Position(c.dec.Ast.Nodes[x].Pos()).Line
+				endLNo := c.fset.Position(c.dec.Ast.Nodes[x].End()).Line
+				if !(startLNo <= c.start && c.end <= endLNo) {
+					return true
+				}
+			}
+
+			sortStructFields(s)
 		}
 
-		sortStructFields(s)
 		return true
 	}
 
